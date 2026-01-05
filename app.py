@@ -4,7 +4,7 @@ import requests
 import os
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins="*", supports_credentials=True)
 
 # Airtable configuration
 AIRTABLE_API_KEY = os.environ.get('AIRTABLE_API_KEY')
@@ -30,9 +30,9 @@ def get_clients():
     Only includes clients with active projects (In Progress or On Hold).
     """
     try:
-        # Fetch all records, filter to active statuses
+        # Fetch all records, exclude completed and archived jobs
         params = {
-            'filterByFormula': "OR({Status}='In Progress', {Status}='On Hold')",
+            'filterByFormula': "AND(NOT({Status}='Completed'), NOT({Status}='Archived'))",
             'fields[]': ['Client']
         }
         
@@ -79,8 +79,8 @@ def get_jobs():
         return jsonify({'error': 'Client parameter required'}), 400
     
     try:
-        # Filter by client (using FIND for partial match) and active status
-        filter_formula = f"AND(FIND('{client_query}', {{Client}}), OR({{Status}}='In Progress', {{Status}}='On Hold'))"
+        # Filter by client (using FIND for partial match) and exclude completed/archived
+        filter_formula = f"AND(FIND('{client_query}', {{Client}}), NOT({{Status}}='Completed'), NOT({{Status}}='Archived'))"
         
         params = {
             'filterByFormula': filter_formula,
