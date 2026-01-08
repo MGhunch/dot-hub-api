@@ -125,9 +125,9 @@ def transform_project(record):
     live_date_raw = fields.get('Live Date', '')
     live_date = parse_friendly_date(live_date_raw) if live_date_raw else None
     
-    # Use Status Changed as lastUpdated
-    status_changed = fields.get('Status Changed', '')
-    last_updated = parse_status_changed(status_changed)
+    # Use Last update made (rollup from Updates table) as lastUpdated
+    last_update_made = fields.get('Last update made', '')
+    last_updated = parse_status_changed(last_update_made)
     
     # With Client is "checked" or empty
     with_client = fields.get('With Client?', '') == 'checked'
