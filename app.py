@@ -129,8 +129,8 @@ def transform_project(record):
     last_update_made = fields.get('Last update made', '')
     last_updated = parse_status_changed(last_update_made)
     
-    # With Client is "checked" or empty
-    with_client = fields.get('With Client?', '') == 'checked'
+    # With Client - Airtable checkbox returns True/False (or missing if unchecked)
+    with_client = bool(fields.get('With Client?', False))
     
     return {
         'jobNumber': job_number,
