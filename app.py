@@ -553,10 +553,11 @@ def update_tracker_record():
         for key, value in data.items():
             if key in field_mapping:
                 airtable_key = field_mapping[key]
-                # Handle ballpark checkbox
+                # Handle ballpark checkbox - Airtable wants boolean
                 if key == 'ballpark':
-                    value = 'checked' if value else None
-                airtable_fields[airtable_key] = value
+                    airtable_fields[airtable_key] = bool(value)
+                else:
+                    airtable_fields[airtable_key] = value
         
         if not airtable_fields:
             return jsonify({'error': 'No valid fields to update'}), 400
