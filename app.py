@@ -411,6 +411,7 @@ def get_tracker_clients():
 def get_tracker_data():
     """
     Get tracker data for a specific client.
+    Joins Tracker table (spend data) with Projects table (job details).
     Query params:
     - client: client code (required)
     """
@@ -419,39 +420,84 @@ def get_tracker_data():
         return jsonify({'error': 'client parameter required'}), 400
     
     try:
-        url = get_airtable_url('Tracker')
+        # Step 1: Get all Projects for this client (need record IDs and job details)
+        projects_url = get_airtable_url('Projects')
+        projects_filter = f"SEARCH('{client_code} ', {{Job Number}}) = 1"
         
-        # Build filter - get all records for this client
-        filter_formula = f"{{Client Code}} = '{client_code}'"
+        # Map by RECORD ID (for joining) and by Job Number (for output)
+        projects_by_record_id = {}  # airtable_record_id -> {jobNumber, projectName, owner}
+        offset = None
+        
+        while True:
+            params = {'filterByFormula': projects_filter}
+            if offset:
+                params['offset'] = offset
+            
+            response = requests.get(projects_url, headers=HEADERS, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            for record in data.get('records', []):
+                record_id = record.get('id')
+                fields = record.get('fields', {})
+                job_number = fields.get('Job Number', '')
+                if record_id and job_number:
+                    projects_by_record_id[record_id] = {
+                        'jobNumber': job_number,
+                        'projectName': fields.get('Project Name', ''),
+                        'owner': fields.get('Project Owner', ''),
+                        'client': fields.get('Client', '')
+                    }
+            
+            offset = data.get('offset')
+            if not offset:
+                break
+        
+        # Step 2: Get all Tracker records for this client
+        tracker_url = get_airtable_url('Tracker')
+        tracker_filter = f"{{Client Code}} = '{client_code}'"
         
         all_records = []
         offset = None
         
         while True:
-            params = {'filterByFormula': filter_formula}
+            params = {'filterByFormula': tracker_filter}
             if offset:
                 params['offset'] = offset
             
-            response = requests.get(url, headers=HEADERS, params=params)
+            response = requests.get(tracker_url, headers=HEADERS, params=params)
             response.raise_for_status()
-            
             data = response.json()
-            records = data.get('records', [])
             
-            for record in records:
+            for record in data.get('records', []):
                 fields = record.get('fields', {})
                 
-                # Parse spend - handle currency strings
+                # Parse spend - handle currency strings or numbers
                 spend = fields.get('Spend', 0)
                 if isinstance(spend, str):
                     spend = int(spend.replace('$', '').replace(',', '') or 0)
                 
+                # Get the linked Project record ID(s) from Job Number field
+                job_link = fields.get('Job Number', [])
+                if isinstance(job_link, list) and len(job_link) > 0:
+                    project_record_id = job_link[0]  # First linked record
+                else:
+                    project_record_id = job_link if isinstance(job_link, str) else None
+                
+                # Look up project details by record ID
+                project = projects_by_record_id.get(project_record_id, {})
+                job_number = project.get('jobNumber', '')
+                
+                # Skip if we can't identify the job
+                if not job_number:
+                    continue
+                
                 all_records.append({
                     'id': record.get('id'),
-                    'client': fields.get('Client Code', ''),
-                    'jobNumber': fields.get('Job Number', ''),
-                    'projectName': fields.get('Project Name', ''),
-                    'owner': fields.get('Owner', ''),
+                    'client': client_code,
+                    'jobNumber': job_number,
+                    'projectName': project.get('projectName', ''),
+                    'owner': project.get('owner', ''),
                     'description': fields.get('Description', ''),
                     'spend': spend,
                     'month': fields.get('Month', ''),
