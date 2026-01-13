@@ -611,6 +611,173 @@ def update_tracker_record():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/tracker/summary')
+def get_tracker_summary():
+    """
+    Get a spend summary for a client and period.
+    Query params:
+    - client: client code (required)
+    - period: month name, "this_month", "last_month", "Q1"-"Q4", "this_quarter", "last_quarter"
+    """
+    client_code = request.args.get('client')
+    period = request.args.get('period', 'this_month')
+    
+    if not client_code:
+        return jsonify({'error': 'client parameter required'}), 400
+    
+    try:
+        # Get client info (budget, quarter info)
+        clients_url = get_airtable_url('Clients')
+        clients_response = requests.get(clients_url, headers=HEADERS)
+        clients_response.raise_for_status()
+        
+        client_info = None
+        for record in clients_response.json().get('records', []):
+            fields = record.get('fields', {})
+            if fields.get('Client code', '') == client_code:
+                monthly_committed = fields.get('Monthly Committed', 0)
+                if isinstance(monthly_committed, str):
+                    monthly_committed = int(monthly_committed.replace('$', '').replace(',', '') or 0)
+                
+                rollover = fields.get('Rollover Credit', 0)
+                if isinstance(rollover, list):
+                    rollover = rollover[0] if rollover else 0
+                if isinstance(rollover, str):
+                    rollover = int(rollover.replace('$', '').replace(',', '') or 0)
+                
+                client_info = {
+                    'name': fields.get('Clients', ''),
+                    'code': client_code,
+                    'monthlyBudget': monthly_committed,
+                    'currentQuarter': fields.get('Current Quarter', ''),
+                    'rollover': rollover
+                }
+                break
+        
+        if not client_info:
+            return jsonify({'error': f'Client {client_code} not found'}), 404
+        
+        # Figure out which months to query
+        now = datetime.now()
+        current_month = now.strftime('%B')  # "January"
+        current_month_num = now.month
+        
+        months_to_query = []
+        period_label = period
+        is_quarter = False
+        
+        # Parse period
+        if period == 'this_month':
+            months_to_query = [current_month]
+            period_label = current_month
+        elif period == 'last_month':
+            last_month_num = current_month_num - 1 if current_month_num > 1 else 12
+            last_month_name = datetime(2024, last_month_num, 1).strftime('%B')
+            months_to_query = [last_month_name]
+            period_label = last_month_name
+        elif period in ['Q1', 'Q2', 'Q3', 'Q4']:
+            is_quarter = True
+            quarter_months = {
+                'Q1': ['January', 'February', 'March'],
+                'Q2': ['April', 'May', 'June'],
+                'Q3': ['July', 'August', 'September'],
+                'Q4': ['October', 'November', 'December']
+            }
+            months_to_query = quarter_months.get(period, [])
+            period_label = period
+        elif period == 'this_quarter':
+            is_quarter = True
+            quarter = (current_month_num - 1) // 3 + 1
+            quarter_months = {
+                1: ['January', 'February', 'March'],
+                2: ['April', 'May', 'June'],
+                3: ['July', 'August', 'September'],
+                4: ['October', 'November', 'December']
+            }
+            months_to_query = quarter_months.get(quarter, [])
+            period_label = f'Q{quarter}'
+        elif period == 'last_quarter':
+            is_quarter = True
+            quarter = (current_month_num - 1) // 3
+            if quarter == 0:
+                quarter = 4
+            quarter_months = {
+                1: ['January', 'February', 'March'],
+                2: ['April', 'May', 'June'],
+                3: ['July', 'August', 'September'],
+                4: ['October', 'November', 'December']
+            }
+            months_to_query = quarter_months.get(quarter, [])
+            period_label = f'Q{quarter}'
+        else:
+            # Assume it's a month name like "January", "February"
+            months_to_query = [period.capitalize()]
+            period_label = period.capitalize()
+        
+        # Get tracker data for this client
+        tracker_url = get_airtable_url('Tracker')
+        tracker_filter = f"{{Client Code}} = '{client_code}'"
+        
+        total_spent = 0
+        offset = None
+        
+        while True:
+            params = {'filterByFormula': tracker_filter}
+            if offset:
+                params['offset'] = offset
+            
+            response = requests.get(tracker_url, headers=HEADERS, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            for record in data.get('records', []):
+                fields = record.get('fields', {})
+                month = fields.get('Month', '')
+                
+                if month in months_to_query:
+                    spend = fields.get('Spend', 0)
+                    if isinstance(spend, str):
+                        spend = int(spend.replace('$', '').replace(',', '') or 0)
+                    # Don't count "On us" items
+                    if not fields.get('On us', False):
+                        total_spent += spend
+            
+            offset = data.get('offset')
+            if not offset:
+                break
+        
+        # Calculate budget for period
+        if is_quarter:
+            budget = client_info['monthlyBudget'] * 3 + client_info['rollover']
+        else:
+            budget = client_info['monthlyBudget']
+        
+        remaining = budget - total_spent
+        percent_used = round((total_spent / budget * 100) if budget > 0 else 0)
+        
+        # Determine status
+        if percent_used > 100:
+            status = 'over'
+        elif percent_used > 80:
+            status = 'high'
+        else:
+            status = 'on_track'
+        
+        return jsonify({
+            'client': client_info['name'],
+            'clientCode': client_code,
+            'period': period_label,
+            'budget': budget,
+            'spent': total_spent,
+            'remaining': remaining,
+            'percentUsed': percent_used,
+            'status': status
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 # ===== CLAUDE PARSE (Query Understanding with Memory) =====
 @app.route('/claude/parse', methods=['POST'])
 def claude_parse():
@@ -673,13 +840,18 @@ CONVERSATION CONTEXT: {context_hint if context_hint else 'Fresh conversation.'}
 
 RESPONSE FORMAT:
 Return ONLY valid JSON:
-{{"coreRequest": "FIND" | "DUE" | "UPDATE" | "TRACKER" | "HELP" | "CLARIFY" | "QUERY" | "HANDOFF" | "UNKNOWN", "modifiers": {{"client": "CLIENT_CODE or null", "status": "In Progress" | "On Hold" | "Incoming" | "Completed" | null, "withClient": true | false | null, "dateRange": "today" | "tomorrow" | "week" | "next" | null, "sortBy": "dueDate" | "updated" | null, "sortOrder": "asc" | "desc" | null}}, "searchTerms": [], "queryType": "contact | details | null", "queryTarget": "who or what to look up", "understood": true | false, "responseText": "What Dot says - warm and fun", "nextPrompt": "One short followup 4-6 words or null", "handoffQuestion": "original question for HANDOFF"}}
+{{"coreRequest": "FIND" | "DUE" | "UPDATE" | "TRACKER" | "HELP" | "CLARIFY" | "QUERY" | "HANDOFF" | "UNKNOWN", "modifiers": {{"client": "CLIENT_CODE or null", "status": "In Progress" | "On Hold" | "Incoming" | "Completed" | null, "withClient": true | false | null, "dateRange": "today" | "tomorrow" | "week" | "next" | null, "period": "this_month" | "last_month" | "January" | "February" | ... | "Q1" | "Q2" | "Q3" | "Q4" | "this_quarter" | "last_quarter" | null, "sortBy": "dueDate" | "updated" | null, "sortOrder": "asc" | "desc" | null}}, "searchTerms": [], "queryType": "contact | details | null", "queryTarget": "who or what to look up", "understood": true | false, "responseText": "What Dot says - warm and fun", "nextPrompt": "One short followup 4-6 words or null", "handoffQuestion": "original question for HANDOFF"}}
 
 REQUEST TYPES:
 - FIND: Looking for jobs ("Show me Sky jobs", "What's on hold?")
 - DUE: Deadline queries ("What's due today?", "What's overdue?")
 - QUERY: Data lookups ("Who's our contact at Fisher?", "What's Sarah's email?")
-- TRACKER: Budget/spend/numbers
+- TRACKER: Budget/spend/numbers queries. Examples:
+  - "How's Tower tracking?" → TRACKER, client: TOW, period: this_month
+  - "Where did One NZ land last month?" → TRACKER, client: ONE, period: last_month
+  - "Sky's Q4 numbers" → TRACKER, client: SKY, period: Q4
+  - "This quarter's spend for Fisher" → TRACKER, client: FIS, period: this_quarter
+  If no period specified, default to this_month.
 - UPDATE: Wants to update a job
 - HELP: Wants to know what Dot can do
 - CLARIFY: User said "them/that" but no context - ask who they mean
