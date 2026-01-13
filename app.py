@@ -948,5 +948,62 @@ def clear_session():
     return jsonify({'success': True})
 
 
+# ===== FEATURE LOG =====
+@app.route('/log', methods=['GET'])
+def get_features():
+    """Get the awesomer list"""
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/Features%20and%20bugs"
+    
+    response = requests.get(url, headers=HEADERS)
+    
+    if response.status_code != 200:
+        return jsonify({'error': 'Failed to fetch'}), 500
+    
+    records = response.json().get('records', [])
+    
+    items = []
+    for r in records:
+        fields = r.get('fields', {})
+        items.append({
+            'title': fields.get('Title', ''),
+            'notes': fields.get('Notes', ''),
+            'done': fields.get('Done', False)
+        })
+    
+    return jsonify({'items': items})
+
+
+@app.route('/log', methods=['POST'])
+def log_feature():
+    """Log a feature request or bug to the awesomer list"""
+    data = request.json
+    
+    if not data or not data.get('title'):
+        return jsonify({'error': 'Title required'}), 400
+    
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/Features%20and%20bugs"
+    
+    fields = {
+        'Title': data['title']
+    }
+    
+    if data.get('notes'):
+        fields['Notes'] = data['notes']
+    
+    response = requests.post(
+        url,
+        headers=HEADERS,
+        json={'fields': fields}
+    )
+    
+    if response.status_code == 200:
+        return jsonify({
+            'success': True,
+            'message': f"Logged: {data['title']}"
+        })
+    else:
+        return jsonify({'error': 'Failed to log'}), 500
+
+
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
