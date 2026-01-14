@@ -840,7 +840,7 @@ CONVERSATION CONTEXT: {context_hint if context_hint else 'Fresh conversation.'}
 
 RESPONSE FORMAT:
 Return ONLY valid JSON:
-{{"coreRequest": "FIND" | "DUE" | "UPDATE" | "TRACKER" | "HELP" | "CLARIFY" | "QUERY" | "HANDOFF" | "UNKNOWN", "modifiers": {{"client": "CLIENT_CODE or null", "status": "In Progress" | "On Hold" | "Incoming" | "Completed" | null, "withClient": true | false | null, "dateRange": "today" | "tomorrow" | "week" | "next" | null, "period": "this_month" | "last_month" | "January" | "February" | ... | "Q1" | "Q2" | "Q3" | "Q4" | "this_quarter" | "last_quarter" | null, "sortBy": "dueDate" | "updated" | null, "sortOrder": "asc" | "desc" | null}}, "searchTerms": [], "queryType": "contact | details | null", "queryTarget": "who or what to look up", "understood": true | false, "responseText": "What Dot says - warm and fun", "nextPrompt": "One short followup 4-6 words or null", "handoffQuestion": "original question for HANDOFF"}}
+{{"coreRequest": "FIND" | "DUE" | "UPDATE" | "TRACKER" | "HELP" | "CLARIFY" | "QUERY" | "HANDOFF" | "LOG" | "UNKNOWN", "modifiers": {{"client": "CLIENT_CODE or null", "status": "In Progress" | "On Hold" | "Incoming" | "Completed" | null, "withClient": true | false | null, "dateRange": "today" | "tomorrow" | "week" | "next" | null, "period": "this_month" | "last_month" | "January" | "February" | ... | "Q1" | "Q2" | "Q3" | "Q4" | "this_quarter" | "last_quarter" | null, "sortBy": "dueDate" | "updated" | null, "sortOrder": "asc" | "desc" | null}}, "searchTerms": [], "queryType": "contact | details | null", "queryTarget": "who or what to look up", "understood": true | false, "responseText": "What Dot says - warm and fun", "nextPrompt": "One short followup 4-6 words or null", "handoffQuestion": "original question for HANDOFF", "logTitle": "short description or null", "logNotes": "conversation context or null"}}
 
 REQUEST TYPES:
 - FIND: Looking for jobs ("Show me Sky jobs", "What's on hold?")
@@ -853,6 +853,9 @@ REQUEST TYPES:
   - "This quarter's spend for Fisher" → TRACKER, client: FIS, period: this_quarter
   If no period specified, default to this_month.
 - UPDATE: Wants to update a job
+- LOG: User wants to log a bug or feature. Triggers: "log this", "add to the bug list", "add to the feature list", "note this bug", "note this feature", "what's on the bug list?", "what features are logged?"
+  For logging: set logTitle (short description) and logNotes (what we were discussing)
+  For reading: just return LOG with responseText summarising what you'll fetch
 - HELP: Wants to know what Dot can do
 - CLARIFY: User said "them/that" but no context - ask who they mean
 - HANDOFF: Something that genuinely needs a human
