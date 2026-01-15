@@ -993,11 +993,22 @@ Don't be robotic. Don't explain what you're doing. Just help."""
         # Parse JSON
         try:
             clean = assistant_message.strip()
-            if clean.startswith('```'):
-                clean = clean.split('```')[1]
-                if clean.startswith('json'):
-                    clean = clean[4:]
-            clean = clean.strip()
+            
+            # Handle JSON wrapped in code blocks
+            if '```json' in clean:
+                # Extract content between ```json and ```
+                start = clean.find('```json') + 7
+                end = clean.find('```', start)
+                if end > start:
+                    clean = clean[start:end].strip()
+            elif '```' in clean:
+                # Handle plain ``` blocks
+                parts = clean.split('```')
+                for part in parts:
+                    part = part.strip()
+                    if part.startswith('{'):
+                        clean = part
+                        break
             
             parsed = json.loads(clean)
             
