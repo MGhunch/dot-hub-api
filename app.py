@@ -467,7 +467,7 @@ def get_jobs():
             project_name = fields.get('Project Name', '')
             jobs.append({
                 'id': job_number,
-                'name': f"{job_number} – {project_name}" if project_name else job_number,
+                'name': f"{job_number} â€“ {project_name}" if project_name else job_number,
                 'recordId': record.get('id', ''),
                 'stage': fields.get('Stage', 'Triage'),
                 'status': fields.get('Status', 'Incoming')
@@ -1084,7 +1084,67 @@ def tool_get_client_detail(client_code):
             'quarterlyCommitted': parse_currency(fields.get('Quarterly Committed', 0)),
             'thisMonth': parse_currency(fields.get('This month', 0)),
             'thisQuarter': parse_currency(fields.get('This Quarter', 0)),
-            'rolloverCredit': rollover
+            'rolloverCredit': rollover,
+            'nextJobNumber': fields.get('Next Job #', '')
+        }
+    
+    except Exception as e:
+        return {'error': str(e)}
+
+
+def tool_reserve_job_number(client_code):
+    """
+    Reserve the next job number for a client.
+    Reads current number, returns it, and increments the counter in Airtable.
+    """
+    try:
+        url = get_airtable_url('Clients')
+        params = {
+            'filterByFormula': f"{{Client code}} = '{client_code}'",
+            'maxRecords': 1
+        }
+        response = requests.get(url, headers=HEADERS, params=params)
+        response.raise_for_status()
+        
+        records = response.json().get('records', [])
+        if not records:
+            return {'error': f'Client {client_code} not found'}
+        
+        record = records[0]
+        record_id = record.get('id')
+        fields = record.get('fields', {})
+        client_name = fields.get('Clients', client_code)
+        
+        # Get current next job number
+        next_num_str = fields.get('Next Job #', '')
+        if not next_num_str:
+            return {'error': f'No job number sequence configured for {client_code}'}
+        
+        # Parse the number (expecting format like "018" or "18")
+        try:
+            next_num = int(next_num_str)
+        except ValueError:
+            return {'error': f'Invalid job number format: {next_num_str}'}
+        
+        # The job number to reserve
+        reserved_job_number = f"{client_code} {next_num:03d}"
+        
+        # Increment and save the new next number
+        new_next_num = f"{next_num + 1:03d}"
+        
+        update_response = requests.patch(
+            f"{url}/{record_id}",
+            headers=HEADERS,
+            json={'fields': {'Next Job #': new_next_num}}
+        )
+        update_response.raise_for_status()
+        
+        return {
+            'success': True,
+            'clientCode': client_code,
+            'clientName': client_name,
+            'reservedJobNumber': reserved_job_number,
+            'nextJobNumber': new_next_num
         }
     
     except Exception as e:
@@ -1229,7 +1289,7 @@ CLAUDE_TOOLS = [
     },
     {
         "name": "get_client_detail",
-        "description": "Get detailed information about a client including their budget, quarter, and commercial setup. Use this when asked about a client's retainer, budget, or financial setup.",
+        "description": "Get detailed information about a client including their budget, quarter, commercial setup, and next job number. Use this when asked about a client's retainer, budget, financial setup, or what the next job number is.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -1258,6 +1318,20 @@ CLAUDE_TOOLS = [
             },
             "required": ["client_code"]
         }
+    },
+    {
+        "name": "reserve_job_number",
+        "description": "Reserve and lock in the next job number for a client. This WRITES to the database - only use when the user confirms they want to reserve/grab/claim a number. For just checking what the next number is, use get_client_detail instead.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "client_code": {
+                    "type": "string",
+                    "description": "The client code (e.g., 'SKY', 'TOW', 'ONE', 'ONS')"
+                }
+            },
+            "required": ["client_code"]
+        }
     }
 ]
 
@@ -1276,6 +1350,8 @@ def execute_tool(tool_name, tool_input):
             client_code=tool_input.get('client_code'),
             period=tool_input.get('period', 'this_month')
         )
+    elif tool_name == "reserve_job_number":
+        return tool_reserve_job_number(tool_input.get('client_code'))
     else:
         return {'error': f'Unknown tool: {tool_name}'}
 
@@ -1357,6 +1433,13 @@ You have access to tools that can look up data. Use them when:
 - Asked about contacts/people (search_people)
 - Asked about client details/setup (get_client_detail)
 - Asked about spend/budget that isn't in the preloaded data (get_spend_summary)
+- Asked about next job numbers (get_client_detail returns nextJobNumber)
+- Asked to RESERVE/GRAB/CLAIM a job number (reserve_job_number - this WRITES to the database!)
+
+JOB NUMBERS:
+- "What's the next job number for ONS?" → Use get_client_detail, return the nextJobNumber (READ ONLY)
+- "Grab me a new ONS job number" / "Reserve ONS number" → First confirm with user ("Want me to lock in ONS 018?"), then use reserve_job_number (WRITES)
+- ALWAYS confirm before using reserve_job_number - it permanently claims the number
 
 The frontend already has Projects preloaded, so for job queries, just return the intent - don't use tools.
 
@@ -1374,10 +1457,10 @@ REQUEST TYPES:
 - DUE: Deadline queries ("What's due today?", "What's overdue?")
 - QUERY: Data lookups - USE TOOLS for these ("Who's our contact at Fisher?", "What's Sarah's email?", "How many people at Tower?")
 - TRACKER: Budget/spend/numbers queries. Examples:
-  - "How's Tower tracking?" → TRACKER, client: TOW, period: this_month
-  - "Where did One NZ land last month?" → TRACKER, client: ONE, period: last_month
-  - "Sky's Q4 numbers" → TRACKER, client: SKY, period: Q4
-  - "This quarter's spend for Fisher" → TRACKER, client: FIS, period: this_quarter
+  - "How's Tower tracking?" â†’ TRACKER, client: TOW, period: this_month
+  - "Where did One NZ land last month?" â†’ TRACKER, client: ONE, period: last_month
+  - "Sky's Q4 numbers" â†’ TRACKER, client: SKY, period: Q4
+  - "This quarter's spend for Fisher" â†’ TRACKER, client: FIS, period: this_quarter
   If no period specified, default to this_month.
 - UPDATE: Wants to update a job
 - LOG: User wants to log a bug or feature. Triggers: "log this", "add to the bug list", "add to the feature list", "note this bug", "note this feature", "what's on the bug list?", "what features are logged?"
@@ -1420,7 +1503,8 @@ REMEMBER: You're helpful first. Most questions have a yes answer. Find it."""
         # Determine if we should use tools
         # Keywords that suggest tool use might be needed
         tool_keywords = ['contact', 'email', 'phone', 'people', 'person', 'how many', 
-                        'who is', "who's", 'invite', 'birthday', 'address']
+                        'who is', "who's", 'invite', 'birthday', 'address',
+                        'job number', 'next number', 'grab', 'reserve', 'claim']
         might_need_tools = any(kw in question.lower() for kw in tool_keywords)
         
         # First API call - with or without tools
@@ -1437,9 +1521,8 @@ REMEMBER: You're helpful first. Most questions have a yes answer. Find it."""
             if not tracker_access:
                 available_tools = [t for t in available_tools if t['name'] != 'get_spend_summary']
             if user_mode == 'client' and user_client:
-                # Client users can only query their own client
-                # We'll enforce this in tool execution
-                pass
+                # Client users can only query their own client and can't reserve job numbers
+                available_tools = [t for t in available_tools if t['name'] != 'reserve_job_number']
             
             api_params['tools'] = available_tools
         
