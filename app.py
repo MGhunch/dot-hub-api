@@ -112,6 +112,16 @@ def transform_project(record):
     
     with_client = bool(fields.get('With Client?', False))
     
+    # Get update history - could be array or string
+    update_history_raw = fields.get('Update history', [])
+    if isinstance(update_history_raw, str):
+        # If it's a string, split by newlines or some delimiter
+        update_history = [u.strip() for u in update_history_raw.split('\n') if u.strip()]
+    elif isinstance(update_history_raw, list):
+        update_history = update_history_raw
+    else:
+        update_history = []
+    
     return {
         'jobNumber': job_number,
         'jobName': fields.get('Project Name', ''),
@@ -120,6 +130,7 @@ def transform_project(record):
         'description': fields.get('Description', ''),
         'projectOwner': fields.get('Project Owner', ''),
         'update': latest_update,
+        'updateHistory': update_history,
         'updateDue': update_due,
         'liveDate': live_date,
         'lastUpdated': last_updated,
@@ -258,7 +269,9 @@ def update_job(job_number):
             'status': 'Status',
             'updateDue': 'Update Due',
             'liveDate': 'Live Date',
-            'withClient': 'With Client?'
+            'withClient': 'With Client?',
+            'description': 'Description',
+            'projectOwner': 'Project Owner'
         }
         
         airtable_fields = {}
