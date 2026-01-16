@@ -403,22 +403,34 @@ def get_tracker_data():
         return jsonify({'error': 'Client code required'}), 400
     
     try:
+        # First, get all projects and build a map by RECORD ID
         projects_url = get_airtable_url('Projects')
-        projects_response = requests.get(projects_url, headers=HEADERS, params={
-            'filterByFormula': f"FIND('{client_code}', {{Job Number}})"
-        })
-        projects_response.raise_for_status()
-        
         projects_map = {}
-        for record in projects_response.json().get('records', []):
-            fields = record.get('fields', {})
-            job_number = fields.get('Job Number', '')
-            if job_number:
-                projects_map[job_number] = {
+        offset = None
+        
+        while True:
+            params = {'filterByFormula': f"FIND('{client_code}', {{Job Number}})"}
+            if offset:
+                params['offset'] = offset
+            
+            projects_response = requests.get(projects_url, headers=HEADERS, params=params)
+            projects_response.raise_for_status()
+            data = projects_response.json()
+            
+            for record in data.get('records', []):
+                record_id = record.get('id')
+                fields = record.get('fields', {})
+                projects_map[record_id] = {
+                    'jobNumber': fields.get('Job Number', ''),
                     'projectName': fields.get('Project Name', ''),
                     'owner': fields.get('Project Owner', '')
                 }
+            
+            offset = data.get('offset')
+            if not offset:
+                break
         
+        # Now get tracker data
         tracker_url = get_airtable_url('Tracker')
         
         all_records = []
@@ -426,7 +438,7 @@ def get_tracker_data():
         
         while True:
             params = {
-                'filterByFormula': f"FIND('{client_code}', {{Job Number}})"
+                'filterByFormula': f"{{Client Code}} = '{client_code}'"
             }
             if offset:
                 params['offset'] = offset
@@ -437,20 +449,24 @@ def get_tracker_data():
             
             for record in data.get('records', []):
                 fields = record.get('fields', {})
-                job_number = fields.get('Job Number', '')
                 
-                # Handle linked field (returns as list)
-                if isinstance(job_number, list):
-                    job_number = job_number[0] if job_number else ''
+                # Job Number is a linked field - returns list of record IDs
+                job_link = fields.get('Job', [])
+                if isinstance(job_link, list):
+                    job_record_id = job_link[0] if job_link else None
+                else:
+                    job_record_id = job_link
+                
+                # Look up project details by record ID
+                project = projects_map.get(job_record_id, {})
+                job_number = project.get('jobNumber', '')
                 
                 spend = fields.get('Spend', 0)
                 if isinstance(spend, str):
                     spend = float(spend.replace('$', '').replace(',', '') or 0)
                 
-                if not job_number or spend == 0:
+                if spend == 0:
                     continue
-                
-                project = projects_map.get(job_number, {})
                 
                 all_records.append({
                     'id': record.get('id'),
