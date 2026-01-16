@@ -410,7 +410,7 @@ def get_tracker_data():
         
         while True:
             params = {
-                'filterByFormula': f"{{Client Code}} = '{client_code}'"
+                'filterByFormula': f"FIND('{client_code}', {{Job Number}})"
             }
             if offset:
                 params['offset'] = offset
@@ -422,7 +422,7 @@ def get_tracker_data():
             for record in data.get('records', []):
                 fields = record.get('fields', {})
                 
-                # Job Number and Project Name are lookup fields from linked Projects
+                # These are all lookup fields now - may return as lists
                 job_number = fields.get('Job Number', '')
                 if isinstance(job_number, list):
                     job_number = job_number[0] if job_number else ''
