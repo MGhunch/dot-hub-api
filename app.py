@@ -321,7 +321,8 @@ def update_job(job_number):
             'liveDate': 'Live Date',
             'withClient': 'With Client?',
             'description': 'Description',
-            'projectOwner': 'Project Owner'
+            'projectOwner': 'Project Owner',
+            'projectName': 'Project Name'
         }
         
         airtable_fields = {}
